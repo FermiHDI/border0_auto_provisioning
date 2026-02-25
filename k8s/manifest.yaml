@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: border0-glue-sa
+  namespace: coder
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: border0-pod-reader
+  namespace: coder
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: border0-pod-reader-binding
+  namespace: coder
+subjects:
+- kind: ServiceAccount
+  name: border0-glue-sa
+  namespace: coder
+roleRef:
+  kind: Role
+  name: border0-pod-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: border0-glue
+  namespace: coder
+spec:
+  selector:
+    app: border0-glue
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: border0-glue
+  namespace: coder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: border0-glue
+  template:
+    metadata:
+      labels:
+        app: border0-glue
+    spec:
+      serviceAccountName: border0-glue-sa
+      containers:
+      - name: border0-glue
+        image: your-registry/border0-glue:latest
+        ports:
+        - name: http
+          containerPort: 8000
+        - name: observability
+          containerPort: 8080
+        env:
+        - name: DEPLOYMENT_MODE
+          value: "k8s"
+        - name: BORDER0_GLOBAL_POLICY_ID
+          value: "your-mgmt-policy-id"
+        # Secrets should be handled via K8s Secrets or Volumes
+        - name: BORDER0_ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: border0-secrets
+              key: admin-token
+        - name: BORDER0_CONNECTOR_ID
+          valueFrom:
+            secretKeyRef:
+              name: border0-secrets
+              key: connector-id
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10

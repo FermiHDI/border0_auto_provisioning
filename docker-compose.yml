@@ -1,0 +1,29 @@
+services:
+  border0-glue:
+    build: .
+    container_name: border0-glue
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Optional: Mount secrets if DEPLOYMENT_MODE is configured to use paths
+      # - ./secrets/border0_token:/etc/secrets/border0_token:ro
+    environment:
+      - BORDER0_ADMIN_TOKEN=${BORDER0_ADMIN_TOKEN}
+      - BORDER0_CONNECTOR_ID=${BORDER0_CONNECTOR_ID}
+      - BORDER0_GLOBAL_POLICY_ID=${BORDER0_GLOBAL_POLICY_ID}
+      - DEPLOYMENT_MODE=docker
+      - PORT=8000
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Example target container for testing
+  test-workspace:
+    image: alpine
+    command: sleep infinity
+    labels:
+      com.coder.user_email: "dev-user@fermihdi.com"
