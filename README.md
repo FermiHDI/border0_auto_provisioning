@@ -34,7 +34,7 @@ Before deploying the Glue App, you must set up your Border0 environment:
     *   Create a new Service Account (e.g., `coder-glue-app`) and assign it the **Member** or **Administrator** role.
     *   Click on the Service Account name and navigate to the **Tokens** tab.
     *   Create a new **Token** and copy the resulting string. This is your `BORDER0_ADMIN_TOKEN`.
-3.  **(Optional) Global Policy**: Create a policy you'd like to reach all sockets (e.g., for admins) and note its `Policy ID`. This can be used as `BORDER0_GLOBAL_POLICY_ID`.
+3.  **(Optional) Global Policy**: Create a policy you'd like to reach all sockets (e.g., for admins) and note its `Policy ID`. This can be used as `BORDER0_GLOBAL_POLICY_ID`.  You may need to get this from the policy's URL in the browser.  For example: `https://portal.border0.com/policies/c89...` -> `c89...`
 
 ### 2. Environment Variables
 Configure the app using these variables:
