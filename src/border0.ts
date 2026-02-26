@@ -21,6 +21,18 @@ export class Border0Client {
     }
 
     /**
+     * Helper to extract a list of items from various Border0 API response shapes.
+     * @private
+     */
+    private extractList(data: any, keys: string[]): any[] {
+        if (!data) return [];
+        for (const key of keys) {
+            if (data[key]) return data[key];
+        }
+        return Array.isArray(data) ? data : [];
+    }
+
+    /**
      * Creates a new socket (SSH or VNC).
      * 
      * @param {string} name - The name of the socket.
@@ -60,8 +72,8 @@ export class Border0Client {
      */
     async listSocketsByName(namePattern: string) {
         const resp = await this.client.get('/sockets');
-        const sockets = resp.data.sockets || [];
-        return sockets.filter((s: any) => s.name.includes(namePattern));
+        const list = this.extractList(resp.data, ['list', 'sockets']);
+        return list.filter((s: any) => s.name.includes(namePattern));
     }
 
     /**
@@ -72,8 +84,8 @@ export class Border0Client {
      */
     async findSocketByName(name: string): Promise<any | null> {
         const resp = await this.client.get('/sockets');
-        const sockets = resp.data.sockets || [];
-        return sockets.find((s: any) => s.name === name) || null;
+        const list = this.extractList(resp.data, ['list', 'sockets']);
+        return list.find((s: any) => s.name === name) || null;
     }
 
     /**
@@ -96,29 +108,11 @@ export class Border0Client {
      */
     async findPolicyByName(name: string): Promise<any | null> {
         const resp = await this.client.get('/policies');
-        const policies = resp.data || [];
-        // Handle both object with 'policies' key or direct array depending on API version
-        const list = Array.isArray(policies) ? policies : (policies.policies || []);
+        const list = this.extractList(resp.data, ['list', 'policies']);
         return list.find((p: any) => p.name === name) || null;
     }
 
-    /**
-     * Verifies if a user exists in the Border0 organization.
-     * 
-     * @param {string} email - The email to verify.
-     * @returns {Promise<boolean>} True if the user exists.
-     */
-    async verifyUserExists(email: string): Promise<boolean> {
-        try {
-            const resp = await this.client.get('/users');
-            const users = resp.data || [];
-            const list = Array.isArray(users) ? users : (users.users || []);
-            return list.some((u: any) => u.email.toLowerCase() === email.toLowerCase());
-        } catch (error) {
-            console.error(`[FermiHDI] Error verifying user ${email}:`, error);
-            return false;
-        }
-    }
+
 
     /**
      * Deletes a policy by its unique ID.
@@ -137,8 +131,7 @@ export class Border0Client {
      */
     async getSocketCountByPolicy(policy_id: string): Promise<number> {
         const resp = await this.client.get('/sockets');
-        const sockets = resp.data || [];
-        const list = Array.isArray(sockets) ? sockets : (sockets.sockets || []);
+        const list = this.extractList(resp.data, ['list', 'sockets']);
 
         // Count sockets that have this policy_id in their policies array
         return list.filter((s: any) =>
@@ -148,7 +141,7 @@ export class Border0Client {
 
     /**
      * Performs a background maintenance check.
-     * Deletes personal policies if the associated user no longer exists in Border0.
+     * Deletes personal policies if they are no longer attached to any sockets.
      * 
      * @returns {Promise<{success: boolean, duration: number}>} Stats about the run.
      */
@@ -157,23 +150,14 @@ export class Border0Client {
         const start = Date.now();
         try {
             const resp = await this.client.get('/policies');
-            const policies = resp.data || [];
-            const list = Array.isArray(policies) ? policies : (policies.policies || []);
-
-            // Fetch all users once for comparison
-            const uResp = await this.client.get('/users');
-            const users = uResp.data || [];
-            const userList = Array.isArray(users) ? users : (users.users || []);
-            const existingEmails = new Set(userList.map((u: any) => u.email.toLowerCase()));
+            const list = this.extractList(resp.data, ['list', 'policies']);
 
             for (const policy of list) {
-                // Only act on personal policies created by this app
+                // Garbage collect orphaned personal policies (those with 0 sockets attached)
                 if (policy.name.startsWith('user-policy-')) {
-                    const emails = policy.policy_data?.condition?.who?.email || [];
-                    const ownerEmail = emails[0]?.toLowerCase();
-
-                    if (ownerEmail && !existingEmails.has(ownerEmail)) {
-                        console.log(`[FermiHDI] User ${ownerEmail} no longer exists. Deleting orphaned policy ${policy.name} (${policy.id})`);
+                    const attachmentCount = await this.getSocketCountByPolicy(policy.id);
+                    if (attachmentCount === 0) {
+                        console.log(`[FermiHDI] Personal policy ${policy.name} is orphaned. Cleaning up...`);
                         await this.deletePolicy(policy.id);
                     }
                 }
@@ -185,16 +169,8 @@ export class Border0Client {
         }
     }
 
-    /**
-     * Attaches policies to a socket.
-     * Uses a shared policy per user and verifies user existence before creation.
-     * 
-     * @param {string} socket_id - The unique ID of the socket.
-     * @param {string} [user_email] - The workspace owner's email.
-     * @param {string[]} [predefined_policy_ids] - List of existing policy IDs.
-     */
     async attachPolicies(socket_id: string, user_email?: string, predefined_policy_ids: string[] = []) {
-        let policyIds = [...predefined_policy_ids];
+        const policyIds = [...predefined_policy_ids];
 
         if (user_email) {
             const sanitizedEmail = user_email.replace(/[^a-zA-Z0-9]/g, '-');
@@ -204,10 +180,8 @@ export class Border0Client {
             let existingPolicy = await this.findPolicyByName(policy_name);
 
             if (!existingPolicy) {
-                // 2. Verify User exists in Border0 before creating a new policy
-                const userExists = await this.verifyUserExists(user_email);
-
-                if (userExists) {
+                // 2. Create the Personal Policy (Border0 will enforce user existence or permissions)
+                try {
                     const policy_data = {
                         name: policy_name,
                         policy_data: {
@@ -218,9 +192,9 @@ export class Border0Client {
                         }
                     };
                     const p_resp = await this.client.post('/policies', policy_data);
-                    policyIds.push(p_resp.data.id);
-                } else {
-                    console.warn(`[FermiHDI] User ${user_email} not found in Border0 organization. Skipping personal policy creation.`);
+                    policyIds.push(p_resp.data.id || p_resp.data.policy_id);
+                } catch (error: any) {
+                    console.error(`[FermiHDI] Failed to create policy ${policy_name} for ${user_email}:`, error.response?.data || error.message);
                 }
             } else {
                 policyIds.push(existingPolicy.id);

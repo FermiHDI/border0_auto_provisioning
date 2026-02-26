@@ -30,37 +30,47 @@ describe('Border0Client', () => {
         await client.attachPolicies('sock-1', email);
     });
 
-    it('creates new policy if it does not exist and user exists', async () => {
+    it('creates new policy if it does not exist (testing id)', async () => {
         const email = 'new-user@test.com';
         nock(baseUrl).get('/policies').reply(200, { policies: [] });
-        nock(baseUrl).get('/users').reply(200, { users: [{ email: email }] });
         nock(baseUrl).post('/policies').reply(201, { id: 'new-p-1' });
         nock(baseUrl).put('/sockets/sock-1/policies', { policy_ids: ['new-p-1'] }).reply(200, {});
 
         await client.attachPolicies('sock-1', email);
     });
 
-    it('skips personal policy if user is not found', async () => {
-        const email = 'ghost@test.com';
-        nock(baseUrl).get('/policies').reply(200, []);
-        nock(baseUrl).get('/users').reply(200, []);
-        nock(baseUrl).put('/sockets/sock-1/policies', { policy_ids: ['mgmt-1'] }).reply(200, {});
+    it('creates new policy if it does not exist (testing policy_id and direct array)', async () => {
+        const email = 'other-user@test.com';
+        nock(baseUrl).get('/policies').reply(200, []); // direct array
+        nock(baseUrl).post('/policies').reply(201, { policy_id: 'new-p-2' });
+        nock(baseUrl).put('/sockets/sock-1/policies', { policy_ids: ['new-p-2'] }).reply(200, {});
 
-        await client.attachPolicies('sock-1', email, ['mgmt-1']);
+        await client.attachPolicies('sock-1', email);
     });
 
-    it('handles errors in verifyUserExists safely', async () => {
-        const email = 'error@test.com';
-        const axiosGetSpy = jest.spyOn((client as any).client, 'get');
-        axiosGetSpy.mockRejectedValue(new Error('Axios failure'));
+    it('handles personal policy creation failure gracefully', async () => {
+        const email = 'ghost@test.com';
+        nock(baseUrl).get('/policies').reply(200, []);
+        nock(baseUrl).post('/policies').reply(403, { error: 'Not allowed' });
+        // Only mgmt-1 should be attached if personal creation fails
+        nock(baseUrl).put('/sockets/sock-1/policies', { policy_ids: ['mgmt-1'] }).reply(200, {});
+
         const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
-
-        const result = await client.verifyUserExists(email);
-        expect(result).toBe(false);
+        await client.attachPolicies('sock-1', email, ['mgmt-1']);
         expect(consoleSpy).toHaveBeenCalled();
-
         consoleSpy.mockRestore();
-        axiosGetSpy.mockRestore();
+    });
+
+    it('handles generic errors gracefully', async () => {
+        const email = 'msg@test.com';
+        nock(baseUrl).get('/policies').reply(200, []);
+        nock(baseUrl).post('/policies').replyWithError('Network failed');
+        nock(baseUrl).put('/sockets/sock-1/policies', { policy_ids: [] }).reply(200, {});
+
+        const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
+        await client.attachPolicies('sock-1', email);
+        expect(consoleSpy).toHaveBeenCalled();
+        consoleSpy.mockRestore();
     });
 
     it('does nothing if no policies to attach', async () => {
@@ -70,34 +80,38 @@ describe('Border0Client', () => {
 
     it('handles missing data in findPolicyByName safely', async () => {
         const axiosGetSpy = jest.spyOn((client as any).client, 'get');
-        axiosGetSpy.mockResolvedValue({ data: null });
+
+        // Coverage for resp.data being null/undefined (axios can return this on certain mocks)
+        axiosGetSpy.mockResolvedValueOnce({ data: undefined });
         expect(await client.findPolicyByName('any')).toBeNull();
+
+        // Coverage for resp.data being a non-array, non-object thing
+        axiosGetSpy.mockResolvedValueOnce({ data: "string" });
+        expect(await client.findPolicyByName('any')).toBeNull();
+
         axiosGetSpy.mockRestore();
     });
 
-    it('handles missing data in verifyUserExists safely', async () => {
-        const axiosGetSpy = jest.spyOn((client as any).client, 'get');
-        axiosGetSpy.mockResolvedValue({ data: undefined });
-        expect(await client.verifyUserExists('any')).toBe(false);
-        axiosGetSpy.mockRestore();
-    });
-
-    it('handles missing inner arrays safely', async () => {
-        nock(baseUrl).get('/policies').reply(200, {});
-        expect(await client.findPolicyByName('any')).toBeNull();
-
-        nock(baseUrl).get('/users').reply(200, {});
-        expect(await client.verifyUserExists('any')).toBe(false);
-    });
-
-    it('lists and filters sockets by name (inc empty logic)', async () => {
-        nock(baseUrl).get('/sockets').reply(200, { sockets: [{ id: '1', name: 'ssh-abc' }] });
-        const res = await client.listSocketsByName('abc');
+    it('lists and filters sockets by name (multiple response formats)', async () => {
+        // Test .list branch
+        nock(baseUrl).get('/sockets').reply(200, { list: [{ id: '1', name: 'ssh-abc' }] });
+        let res = await client.listSocketsByName('abc');
         expect(res).toHaveLength(1);
 
-        nock(baseUrl).get('/sockets').reply(200, {}); // Missing sockets key
-        const res2 = await client.listSocketsByName('abc');
-        expect(res2).toHaveLength(0);
+        // Test missing list/sockets key (empty object) branch
+        nock(baseUrl).get('/sockets').reply(200, {});
+        res = await client.listSocketsByName('abc');
+        expect(res).toHaveLength(0);
+
+        // Test resp.data being "falsy" (covered by empty object for now in nock context)
+        nock(baseUrl).get('/sockets').reply(200); // 200 with no body
+        res = await client.listSocketsByName('abc');
+        expect(res).toHaveLength(0);
+
+        // Test direct array branch
+        nock(baseUrl).get('/sockets').reply(200, [{ id: '2', name: 'ssh-xyz' }]);
+        res = await client.listSocketsByName('xyz');
+        expect(res).toHaveLength(1);
     });
 
     it('deletes a socket', async () => {
@@ -105,23 +119,18 @@ describe('Border0Client', () => {
         await client.deleteSocket('sock-1');
     });
 
-    it('identifies user in direct array return', async () => {
-        nock(baseUrl).get('/users').reply(200, [{ email: 'one@test.com' }]);
-        const res = await client.verifyUserExists('one@test.com');
-        expect(res).toBe(true);
-    });
-
-    it('finds a socket by exact name', async () => {
+    it('finds a socket by exact name (multiple response formats)', async () => {
+        // Test .sockets branch
         nock(baseUrl).get('/sockets').reply(200, { sockets: [{ name: 'exact-match', id: 'sock-1' }] });
         const socket = await client.findSocketByName('exact-match');
         expect(socket?.id).toBe('sock-1');
 
-        nock(baseUrl).get('/sockets').reply(200, { sockets: [] });
+        nock(baseUrl).get('/sockets').reply(200, { list: [] });
         const missing = await client.findSocketByName('non-existent');
         expect(missing).toBeNull();
 
-        // 100% Coverage: Handle branch where data is empty object
-        nock(baseUrl).get('/sockets').reply(200, {});
+        // Testing no-body branch for findSocketByName
+        nock(baseUrl).get('/sockets').reply(200, "");
         expect(await client.findSocketByName('any')).toBeNull();
     });
 

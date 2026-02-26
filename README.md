@@ -29,8 +29,12 @@ When a Coder workspace (Docker container or K8s Pod) is provisioned:
 ### 1. Border0 Configuration
 Before deploying the Glue App, you must set up your Border0 environment:
 1.  **Connector**: Install and run a [Border0 Connector](https://portal.border0.com/connectors) in your network (Docker, K8s, or Linux). Note its `Connector ID`.
-2.  **API Token**: Generate an **Admin Token** from the [Border0 Portal](https://portal.border0.com/settings/tokens).
-3.  **(Optional) Management Policy**: Create a policy you'd like to reach all sockets (e.g., for admins) and note its `Policy ID`.
+2.  **Service Account & Token**: 
+    *   Navigate to **Team** > **Service Accounts** in the Border0 Portal.
+    *   Create a new Service Account (e.g., `coder-glue-app`) and assign it the **Member** or **Administrator** role.
+    *   Click on the Service Account name and navigate to the **Tokens** tab.
+    *   Create a new **Token** and copy the resulting string. This is your `BORDER0_ADMIN_TOKEN`.
+3.  **(Optional) Global Policy**: Create a policy you'd like to reach all sockets (e.g., for admins) and note its `Policy ID`. This can be used as `BORDER0_GLOBAL_POLICY_ID`.
 
 ### 2. Environment Variables
 Configure the app using these variables:
@@ -163,11 +167,17 @@ The FermiHDI Glue App is fully instrumented for enterprise-grade observability:
 The FermiHDI Glue App includes advanced features to keep your Border0 organization clean:
 
 1.  **Socket Removal**: On `/deprovision`, all sockets associated with the workspace are deleted.
-2.  **Policy Cleanup**: On deprovision, if a personal policy is no longer used by any other active sockets, it is automatically removed.
-3.  **Active User Verification**:
-    *   The app verifies that a user actually exists in Border0 before creating a security policy.
-    *   **Hourly Background Job**: The app performs a maintenance scan every hour. If it finds a policy for an email that is no longer an active user in Border0, the policy is deleted.
-    *   **Adaptive Scheduling**: If the Border0 API is slow, the app automatically jitters the next maintenance run to avoid call exhaustion.
+2.  **Automated Policy Cleanup**:
+    *   **Shared Personal Policies**: The app creates a dedicated policy for each developer, shared across their SSH and VNC workspaces.
+    *   **Hourly Garbage Collection**: The app performs a maintenance scan every hour. If it finds a personal policy that is no longer attached to any active sockets, it is automatically deleted to keep the organization clean.
+    *   **Adaptive Scheduling**: If the Border0 API exhibits latency, the app automatically jitters the next maintenance run to optimize load management.
+
+> [!NOTE]
+> **Technical Note on User Discovery**: Border0 Service Account tokens (even with Administrator roles) are restricted from accessing certain identity-management endpoints like `/users` or `/user`. 
+> 
+> **Impact**: The app cannot verify if a user exists in Border0 before attempting to create a policy for them.
+> 
+> **Workaround**: The app is designed to be **optimistic**. It attempts to create the required personal policy directly. If the user doesn't exist or permissions fail, it logs the event and degrades gracefully by only attaching the Global policies. Cleanup is performed by counting active socket attachments rather than querying a user list, ensuring 100% reliability without requiring additional API scopes.
 
 ## Development & Testing
 ### Quality Standard
