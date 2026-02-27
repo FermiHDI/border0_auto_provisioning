@@ -7,8 +7,15 @@ export interface DiscoveryInfo {
     email?: string;
 }
 
+export interface DiscoveryEvent {
+    type: 'start' | 'stop';
+    containerId: string;
+    namespace?: string;
+}
+
 export abstract class ContainerDiscovery {
     abstract getContainerInfo(container_id: string, namespace?: string): Promise<DiscoveryInfo | null>;
+    abstract startWatching(callback: (event: DiscoveryEvent) => void): Promise<void>;
 }
 
 /**
@@ -42,12 +49,27 @@ export class DockerDiscovery extends ContainerDiscovery {
             return {
                 ip,
                 labels,
-                email: labels['com.coder.user_email'] || labels['owner_email']
+                email: labels['border0.io/email'] || labels['com.coder.user_email'] || labels['owner_email']
             };
         } catch (error) {
             console.error(`Error discovering Docker container ${container_id}:`, error);
             return null;
         }
+    }
+    /**
+     * Watches Docker events to detect container start/stop.
+     */
+    async startWatching(callback: (event: DiscoveryEvent) => void): Promise<void> {
+        const stream = await this.docker.getEvents();
+        stream.on('data', (chunk) => {
+            const event = JSON.parse(chunk.toString());
+            // Docker events: 'start' for new containers, 'die' for stop
+            if (event.Status === 'start') {
+                callback({ type: 'start', containerId: event.id });
+            } else if (event.Status === 'die') {
+                callback({ type: 'stop', containerId: event.id });
+            }
+        });
     }
 }
 
@@ -58,11 +80,13 @@ export class DockerDiscovery extends ContainerDiscovery {
 export class K8sDiscovery extends ContainerDiscovery {
     private k8sApi: k8s.CoreV1Api;
 
+    private kubeConfig: k8s.KubeConfig;
+
     constructor() {
         super();
-        const kc = new k8s.KubeConfig();
-        kc.loadFromDefault();
-        this.k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+        this.kubeConfig = new k8s.KubeConfig();
+        this.kubeConfig.loadFromDefault();
+        this.k8sApi = this.kubeConfig.makeApiClient(k8s.CoreV1Api);
     }
 
     /**
@@ -80,11 +104,46 @@ export class K8sDiscovery extends ContainerDiscovery {
             return {
                 ip: pod.status?.podIP || '',
                 labels: pod.metadata?.labels || {},
-                email: pod.metadata?.labels?.['com.coder.user_email'] || pod.metadata?.annotations?.['com.coder.user_email']
+                email: pod.metadata?.labels?.['border0.io/email'] ||
+                    pod.metadata?.annotations?.['border0.io/email'] ||
+                    pod.metadata?.labels?.['com.coder.user_email'] ||
+                    pod.metadata?.annotations?.['com.coder.user_email']
             };
         } catch (error) {
             console.error(`Error discovering K8s pod ${container_id} in namespace ${namespace}:`, error);
             return null;
         }
+    }
+
+    /**
+     * Watches Kubernetes Pod events to detect creation/deletion.
+     */
+    async startWatching(callback: (event: DiscoveryEvent) => void): Promise<void> {
+        const watch = new k8s.Watch(this.kubeConfig);
+        watch.watch(
+            '/api/v1/pods',
+            { labelSelector: 'border0.io/enable=true' },
+            (type, obj) => {
+                const pod = obj as k8s.V1Pod;
+                const name = pod.metadata?.name;
+                const ns = pod.metadata?.namespace;
+
+                if (!name) return;
+
+                if (type === 'ADDED' || (type === 'MODIFIED')) {
+                    // Only trigger 'start' if we have an IP and the pod is running
+                    if (pod.status?.podIP && pod.status?.phase === 'Running') {
+                        callback({ type: 'start', containerId: name, namespace: ns });
+                    }
+                } else if (type === 'DELETED') {
+                    callback({ type: 'stop', containerId: name, namespace: ns });
+                }
+            },
+            (err) => {
+                if (err) console.error('K8s Watch Error:', err);
+            }
+        ).catch(err => {
+            console.error('K8s Watch Startup Error:', err);
+        });
     }
 }

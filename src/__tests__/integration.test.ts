@@ -1,21 +1,23 @@
-import { GenericContainer, StartedTestContainer } from 'testcontainers';
-import { DockerDiscovery } from '../discovery.js';
 import { jest } from '@jest/globals';
 
-describe('DockerDiscovery Integration', () => {
-    let container: StartedTestContainer;
-    let discovery: DockerDiscovery;
+// Increasing timeout for downloading/starting container
+jest.setTimeout(30000);
 
-    // Increasing timeout for downloading/starting container
-    jest.setTimeout(30000);
+// Use dynamic imports for ESM compatibility
+const { GenericContainer } = await import('testcontainers');
+const { DockerDiscovery } = await import('../discovery.js');
+
+describe('DockerDiscovery Integration', () => {
+    let container: any;
+    let discovery: any;
 
     beforeAll(async () => {
-        // Start a lightweight alphine container with specific labels
+        // Start a lightweight alpine container with specific labels
         container = await new GenericContainer('alpine')
             .withCommand(['sleep', '3600'])
             .withLabels({
-                'com.coder.user_email': 'integration-test@fermihdi.com',
-                'owner_email': 'fallback@fermihdi.com',
+                'border0.io/enable': 'true',
+                'border0.io/email': 'integration-test@fermihdi.com',
                 'project': 'border0-glue'
             })
             .start();

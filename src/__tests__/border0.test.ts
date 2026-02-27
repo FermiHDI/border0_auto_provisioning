@@ -7,17 +7,43 @@ describe('Border0Client', () => {
     const baseUrl = 'https://api.border0.com/api/v1';
 
     beforeEach(() => {
-        client = new Border0Client('test-token');
+        client = new Border0Client('test-token', 'coder');
         nock.cleanAll();
     });
 
-    it('creates a socket correctly', async () => {
+    it('creates a vnc socket correctly', async () => {
         const scope = nock(baseUrl)
-            .post('/sockets')
-            .reply(200, { id: 'sock-1', dnsname: 'test.border0.io' });
+            .post('/sockets', {
+                name: 'test-vnc',
+                socket_type: 'vnc',
+                connector_id: 'conn-1',
+                upstream_type: 'proxy',
+                upstream_host: '1.2.3.4',
+                upstream_port: 5901
+            })
+            .reply(200, { id: 'sock-vnc', dnsname: 'vnc.border0.io' });
+
+        const result = await client.createSocket('test-vnc', 'vnc', 'conn-1', '1.2.3.4', 5901);
+        expect(result.id).toBe('sock-vnc');
+        expect(scope.isDone()).toBe(true);
+    });
+
+    it('creates an ssh socket with certificate auth correctly', async () => {
+        const scope = nock(baseUrl)
+            .post('/sockets', {
+                name: 'test-ssh',
+                socket_type: 'ssh',
+                connector_id: 'conn-1',
+                upstream_type: 'proxy',
+                upstream_host: '1.2.3.4',
+                upstream_port: 22,
+                ssh_authentication_type: 'border0_certificate',
+                ssh_username: 'coder'
+            })
+            .reply(200, { id: 'sock-ssh', dnsname: 'ssh.border0.io' });
 
         const result = await client.createSocket('test-ssh', 'ssh', 'conn-1', '1.2.3.4', 22);
-        expect(result.id).toBe('sock-1');
+        expect(result.id).toBe('sock-ssh');
         expect(scope.isDone()).toBe(true);
     });
 
@@ -138,5 +164,10 @@ describe('Border0Client', () => {
         nock(baseUrl).put('/sockets/sock-1', { upstream_host: '5.6.7.8' }).reply(200, { id: 'sock-1' });
         const res = await client.updateSocket('sock-1', { upstream_host: '5.6.7.8' });
         expect(res.id).toBe('sock-1');
+    });
+
+    it('uses default ssh username if not provided', () => {
+        const tempClient = new Border0Client('token');
+        expect((tempClient as any).sshUsername).toBe('coder');
     });
 });

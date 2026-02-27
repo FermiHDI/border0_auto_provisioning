@@ -7,7 +7,7 @@ describe('Border0Client Advanced Maintenance', () => {
     const baseUrl = 'https://api.border0.com/api/v1';
 
     beforeEach(() => {
-        client = new Border0Client('test-token');
+        client = new Border0Client('test-token', 'coder');
         nock.cleanAll();
     });
 

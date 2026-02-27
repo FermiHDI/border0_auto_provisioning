@@ -22,6 +22,10 @@ When a Coder workspace (Docker container or K8s Pod) is provisioned:
     *   **Global Policies**: Automatically attaches organization-wide management or audit policies to every socket.
 4.  **Automated Lifecycle Cleanup**: When a workspace stops, the Glue App removes the sockets and garbage-collects any orphaned personal policies or users no longer active in the organization.
 
+### Design Assumptions
+*   **Ephemeral Workspaces**: All Coder workspaces managed by this logic are assumed and designed to be **100% ephemeral**. Configuration resides in the image or template, and state is managed externally.
+*   **Identity First**: Access is pinned to the developer's verified email, ensuring that only the specific workspace owner can reach their environment.
+
 ---
 
 ## Prerequisites & Setup
@@ -43,7 +47,9 @@ Configure the app using these variables:
 | :--- | :--- | :--- |
 | `BORDER0_ADMIN_TOKEN` | Border0 Admin API Token (or path to a secret file) | `ey...` or `/run/secrets/token` |
 | `BORDER0_CONNECTOR_ID` | The ID of your Border0 Connector (or path to file) | `b78...` |
+| `BORDER0_SSH_USERNAME` | The SSH user to login to workspaces (defaults to `coder`) | `coder` |
 | `BORDER0_GLOBAL_POLICY_ID` | (Optional) Global Policy ID to attach to all sockets | `c89...` |
+| `AUTO_PROVISION` | Enable automatic socket creation via labels/events (`true`/`false`) | `true` |
 | `DEPLOYMENT_MODE` | Set to `docker` or `k8s` based on your host environment | `k8s` |
 | `PORT` | Listening port for the Glue App | `8000` |
 
@@ -151,6 +157,97 @@ resource "coder_app" "vnc_access" {
   url          = local.border0.urls.vnc
   icon         = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/microsoft-remote-desktop.png"
 }
+```
+
+---
+
+## Workspace Configuration
+For Border0 to facilitate secure, passwordless logins using Identity-aware SSH, the target Coder workspace needs to trust the Border0 SSH Certificate Authority.
+
+### 1. SSH Socket Standards
+The Glue App automatically provisions SSH sockets with the following configuration:
+*   **Connection Type**: Standard SSH (Proxy Mode)
+*   **Authentication Type**: Border0 Certificate
+*   **Assigned SSH Username**: Configurable via `BORDER0_SSH_USERNAME` (default: `coder`)
+
+### 2. Dockerfile Requirements
+Update your Coder workspace `Dockerfile` to accept Border0 certificate logins. This eliminates the need for managing SSH keys manually.
+
+To get the border0_ca.pub for your SSH server, log in to the Border0 portal and navigate to Organization Settings > Details. Copy the SSH CA public key shown there and save it into a file that you then copy into your Docker image.
+
+Alternatively you can use the Border0 CLI to fetch the SSH CA public key and save it into a file that you then copy into your Docker image. For example: ```border0 organization show --format json | jq -r '.border0_ca.pub'```
+
+```dockerfile
+# Replace 'coder' with your desired SSH username
+ARG BORDER0_SSH_USERNAME=coder
+
+# 1. Install SSH Server
+RUN apt-get update && apt-get install -y openssh-server
+
+# 2. Configure SSHD to trust the Border0 CA
+# This allows Border0 to issue temporary certificates for your developers
+COPY border0_ca.pub /etc/ssh/border0_ca.pub
+RUN echo "TrustedUserCAKeys /etc/ssh/border0_ca.pub" >> /etc/ssh/sshd_config && \
+    echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config && \
+    echo "PasswordAuthentication no" >> /etc/ssh/sshd_config && \
+    echo "AuthorizedPrincipalsFile /etc/ssh/authorized_principals/%u" >> /etc/ssh/sshd_config && \
+    mkdir -p /etc/ssh/authorized_principals/ && \
+    echo "border0_ssh_signed" >> /etc/ssh/authorized_principals/${BORDER0_SSH_USERNAME} && \
+    chmod 600 /etc/ssh/authorized_principals/${BORDER0_SSH_USERNAME}
+
+# 3. Ensure the target user exists (matching BORDER0_SSH_USERNAME)
+RUN useradd -m -s /bin/bash ${BORDER0_SSH_USERNAME} && \
+    mkdir -p /home/${BORDER0_SSH_USERNAME}/.ssh && \
+    chown -R ${BORDER0_SSH_USERNAME}:${BORDER0_SSH_USERNAME} /home/${BORDER0_SSH_USERNAME}
+
+# 4. Standard Coder setup (Ensure sudo access)
+RUN echo "${BORDER0_SSH_USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+```
+
+---
+
+## Auto-Provisioning Mode (Optional)
+As an alternative to using the Coder Terraform provider, the Glue App can listen directly to the Docker engine or Kubernetes API for new containers/pods. When a container starts with the appropriate labels, the Glue App will automatically provision the corresponding Border0 sockets.
+
+### 1. Enabling Auto-Provisioning
+Set the `AUTO_PROVISION=true` environment variable in your Glue App deployment.
+
+### 2. Supported Labels & Annotations
+The app scans for the following metadata on containers (Docker) or pods (Kubernetes):
+
+| Label/Annotation | Description | Example |
+| :--- | :--- | :--- |
+| `border0.io/enable` | Must be set to `true` to trigger provisioning | `true` |
+| `border0.io/email` | Overrides the default owner email discovery | `dev@example.com` |
+| `border0.io/ssh_port` | Overrides the default SSH port (22) | `2222` |
+| `border0.io/vnc_port` | Overrides the default VNC port (5901) | `5900` |
+
+### 3. Usage Examples
+
+#### Docker Compose
+```yaml
+services:
+  my-workspace:
+    image: my-coder-image
+    labels:
+      - "border0.io/enable=true"
+      - "border0.io/email=dev@example.com"
+```
+
+#### Kubernetes Pod
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-workspace
+  labels:
+    border0.io/enable: "true"
+  annotations:
+    border0.io/email: "dev@example.com"
+spec:
+  containers:
+    - name: workspace
+      image: my-coder-image
 ```
 
 ---

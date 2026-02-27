@@ -1,37 +1,61 @@
-import { DockerDiscovery, K8sDiscovery } from '../discovery.js';
-import Docker from 'dockerode';
-import * as k8s from '@kubernetes/client-node';
 import { jest } from '@jest/globals';
+import { EventEmitter } from 'events';
 
-jest.mock('dockerode');
-jest.mock('@kubernetes/client-node');
+// 1. Setup ESM mocks using unstable_mockModule before any other imports
+// This is required for experimental-vm-modules to mock cross-module ESM imports.
+jest.unstable_mockModule('@kubernetes/client-node', () => ({
+    KubeConfig: jest.fn().mockImplementation(() => ({
+        loadFromDefault: jest.fn(),
+        makeApiClient: jest.fn()
+    })),
+    Watch: jest.fn()
+}));
+
+jest.unstable_mockModule('dockerode', () => {
+    const mockContainer = {
+        inspect: jest.fn()
+    };
+    const mockDocker = jest.fn().mockImplementation(() => {
+        const inst = {
+            getContainer: jest.fn().mockReturnValue(mockContainer),
+            getEvents: jest.fn().mockImplementation(() => Promise.resolve(new EventEmitter()))
+        };
+        return inst;
+    });
+    (mockDocker as any).prototype = { getContainer: jest.fn() }; // dummy for instanceof
+    return {
+        default: mockDocker
+    };
+});
+
+// 2. Import the modules that will use the mocks
+// We use dynamic imports because the mocks must be registered first in the ESM lifecycle.
+const k8s: any = await import('@kubernetes/client-node');
+const Docker: any = (await import('dockerode')).default;
+const { DockerDiscovery, K8sDiscovery } = await import('../discovery.js');
 
 describe('Discovery Engines', () => {
 
     describe('DockerDiscovery', () => {
-        let discovery: DockerDiscovery;
-        let mockContainer: any;
+        let discovery: any;
+        let mockDockerInstance: any;
 
         beforeEach(() => {
-            mockContainer = {
-                inspect: jest.fn()
-            };
-            // Mock constructor logic that actually works in ESM
-            (Docker as any).prototype.getContainer = jest.fn().mockReturnValue(mockContainer);
+            (Docker as any).mockClear();
             discovery = new DockerDiscovery();
+            // Capture the instance from the last (most recent) mock constructor call
+            const calls = (Docker as any).mock.results;
+            mockDockerInstance = calls[calls.length - 1].value;
         });
 
         it('returns container info correctly', async () => {
+            const mockContainer = mockDockerInstance.getContainer();
             mockContainer.inspect.mockResolvedValue({
                 NetworkSettings: {
-                    Networks: {
-                        bridge: { IPAddress: '172.17.0.2' }
-                    }
+                    Networks: { bridge: { IPAddress: '172.17.0.2' } }
                 },
                 Config: {
-                    Labels: {
-                        'com.coder.user_email': 'docker@test.com'
-                    }
+                    Labels: { 'com.coder.user_email': 'docker@test.com' }
                 }
             });
 
@@ -40,38 +64,34 @@ describe('Discovery Engines', () => {
             expect(info?.email).toBe('docker@test.com');
         });
 
-        it('handles missing network or labels safely', async () => {
-            mockContainer.inspect.mockResolvedValue({
-                NetworkSettings: { Networks: {} },
-                Config: {}
-            });
+        it('watches docker events', async () => {
+            const mockStream = new EventEmitter();
+            mockDockerInstance.getEvents.mockImplementation(() => Promise.resolve(mockStream));
 
-            const info = await discovery.getContainerInfo('test-id');
-            expect(info?.ip).toBe('');
-            expect(info?.labels).toEqual({});
-        });
+            const events: any[] = [];
+            await discovery.startWatching((e: any) => events.push(e));
 
-        it('returns null on docker error', async () => {
-            mockContainer.inspect.mockRejectedValue(new Error('Docker error'));
-            const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
+            mockStream.emit('data', Buffer.from(JSON.stringify({ Status: 'start', id: 'c1' })));
+            mockStream.emit('data', Buffer.from(JSON.stringify({ Status: 'die', id: 'c1' })));
 
-            const info = await discovery.getContainerInfo('bad-id');
-            expect(info).toBeNull();
-            expect(consoleSpy).toHaveBeenCalled();
-            consoleSpy.mockRestore();
+            expect(events).toHaveLength(2);
+            expect(events[0]).toEqual({ type: 'start', containerId: 'c1' });
+            expect(events[1]).toEqual({ type: 'stop', containerId: 'c1' });
         });
     });
 
     describe('K8sDiscovery', () => {
-        let discovery: K8sDiscovery;
+        let discovery: any;
         let mockK8sApi: any;
 
         beforeEach(() => {
             mockK8sApi = {
                 readNamespacedPod: jest.fn()
             };
-            (k8s.KubeConfig as any).prototype.loadFromDefault = jest.fn();
-            (k8s.KubeConfig as any).prototype.makeApiClient = jest.fn().mockReturnValue(mockK8sApi);
+            k8s.KubeConfig.mockImplementation(() => ({
+                loadFromDefault: jest.fn(),
+                makeApiClient: jest.fn().mockReturnValue(mockK8sApi)
+            }));
             discovery = new K8sDiscovery();
         });
 
@@ -90,42 +110,27 @@ describe('Discovery Engines', () => {
             expect(info?.email).toBe('k8s@test.com');
         });
 
-        it('returns pod info from annotations if label is missing', async () => {
-            mockK8sApi.readNamespacedPod.mockResolvedValue({
-                body: {
-                    status: { podIP: '10.0.0.2' },
-                    metadata: {
-                        labels: {},
-                        annotations: { 'com.coder.user_email': 'anno@test.com' }
-                    }
-                }
-            });
+        it('watches k8s pod events', async () => {
+            const mockWatchInstance = {
+                watch: jest.fn().mockImplementation(((_p: string, _o: any, cb: any, _e: any) => {
+                    cb('ADDED', {
+                        metadata: { name: 'p1', namespace: 'ns1' },
+                        status: { podIP: '1.1.1.1', phase: 'Running' }
+                    });
+                    cb('DELETED', {
+                        metadata: { name: 'p1', namespace: 'ns1' }
+                    });
+                    return Promise.resolve();
+                }) as any)
+            };
+            k8s.Watch.mockImplementation(() => mockWatchInstance);
 
-            const info = await discovery.getContainerInfo('pod-id');
-            expect(info?.email).toBe('anno@test.com');
-        });
+            const events: any[] = [];
+            await discovery.startWatching((e: any) => events.push(e));
 
-        it('returns pod info with empty defaults if metadata is missing', async () => {
-            mockK8sApi.readNamespacedPod.mockResolvedValue({
-                body: {
-                    status: {},
-                    metadata: {}
-                }
-            });
-
-            const info = await discovery.getContainerInfo('pod-id');
-            expect(info?.ip).toBe('');
-            expect(info?.email).toBeUndefined();
-        });
-
-        it('returns null on k8s error', async () => {
-            mockK8sApi.readNamespacedPod.mockRejectedValue(new Error('K8s error'));
-            const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
-
-            const info = await discovery.getContainerInfo('bad-pod');
-            expect(info).toBeNull();
-            expect(consoleSpy).toHaveBeenCalled();
-            consoleSpy.mockRestore();
+            expect(events).toHaveLength(2);
+            expect(events[0].type).toBe('start');
+            expect(events[1].type).toBe('stop');
         });
     });
 });

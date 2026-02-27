@@ -5,12 +5,14 @@ import axios, { type AxiosInstance } from 'axios';
  * Follows Google-style documentation standards for FermiHDI.
  */
 export class Border0Client {
+    private sshUsername: string;
     private client: AxiosInstance;
 
     /**
      * @param {string} token - The Border0 administration token.
+     * @param {string} sshUsername - The default SSH username for SSH sockets (defaults to "coder").
      */
-    constructor(token: string) {
+    constructor(token: string, sshUsername: string = 'coder') {
         this.client = axios.create({
             baseURL: 'https://api.border0.com/api/v1',
             headers: {
@@ -18,6 +20,7 @@ export class Border0Client {
                 'Content-Type': 'application/json'
             }
         });
+        this.sshUsername = sshUsername;
     }
 
     /**
@@ -43,7 +46,7 @@ export class Border0Client {
      * @returns {Promise<any>} The created socket details.
      */
     async createSocket(name: string, socket_type: string, connector_id: string, upstream_host: string, upstream_port: number) {
-        const payload = {
+        const payload: any = {
             name,
             socket_type,
             connector_id,
@@ -51,6 +54,13 @@ export class Border0Client {
             upstream_host,
             upstream_port
         };
+
+        // Standardized SSH Configuration for FermiHDI
+        if (socket_type === 'ssh') {
+            payload.ssh_authentication_type = 'border0_certificate';
+            payload.ssh_username = this.sshUsername;
+        }
+
         const resp = await this.client.post('/sockets', payload);
         return resp.data;
     }
