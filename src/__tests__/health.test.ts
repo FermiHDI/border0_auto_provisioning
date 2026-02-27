@@ -19,13 +19,19 @@ describe('API Health Check', () => {
         // to export 'app' or just test the logic. For now, let's create a minimal app 
         // that matches the health check logic to verify the endpoint structure.
         app = express();
-        app.get('/', (req, res) => {
+        app.get(['/health', '/healthz'], (req, res) => {
             res.json({ status: 'healthy', mode: 'docker' });
         });
     });
 
-    it('returns healthy status on GET /', async () => {
-        const response = await request(app).get('/');
+    it('returns healthy status on GET /health', async () => {
+        const response = await request(app).get('/health');
+        expect(response.status).toBe(200);
+        expect(response.body.status).toBe('healthy');
+    });
+
+    it('returns healthy status on GET /healthz', async () => {
+        const response = await request(app).get('/healthz');
         expect(response.status).toBe(200);
         expect(response.body.status).toBe('healthy');
     });

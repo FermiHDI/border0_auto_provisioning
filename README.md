@@ -11,12 +11,12 @@ ALL RIGHTS RESERVED<br />
 © COPYRIGHT 2026 FERMIHDI LIMITED<br />
 
 ## Project Overview
-This project provides a robust REST API that acts as the "glue" between **Coder.com** and **Border0**. It enables dynamic, identity-aware socket management for developer workspaces, ensuring that every remote workspace is securely accessible via SSH or VNC without complex network configuration.
+This project provides a robust REST API that acts as the "glue" between **Coder.com** and **Border0**. It enables dynamic, identity-aware socket management for developer workspaces, ensuring that every remote workspace is securely accessible via SSH or VNC without complex network configuration.  While intended to be used with Coder managed workspace containers, it can be used as is with any container orchestration platform or purpose that exposes the necessary metadata.
 
 ### How it Works
 When a Coder workspace (Docker container or K8s Pod) is provisioned:
 1.  **Discovery**: The Glue App identifies the workspace's metadata (Internal IP, Name, Namespace) and owner identity via environment-aware discovery (Docker or Kubernetes).
-2.  **Idempotent Provisioning**: It creates or updates unique SSH and VNC sockets. If a workspace restarts and its IP changes, the app automatically detects the existing sockets and updates their upstream configuration in Border0.
+2.  **Idempotent Provisioning**: It creates or updates unique sockets of the type requested. If a workspace restarts and its IP changes, the app automatically detects the existing sockets and updates their upstream configuration in Border0.
 3.  **Security Policy Enforcement**: It attaches and synchronizes access policies:
     *   **Personal Policy**: Strictly restricts access to the workspace owner's verified email.
     *   **Global Policies**: Automatically attaches organization-wide management or audit policies to every socket.
@@ -52,6 +52,76 @@ Configure the app using these variables:
 | `AUTO_PROVISION` | Enable automatic socket creation via labels/events (`true`/`false`) | `true` |
 | `DEPLOYMENT_MODE` | Set to `docker` or `k8s` based on your host environment | `k8s` |
 | `PORT` | Listening port for the Glue App | `8000` |
+| `NODE_ENV` | Set to `production` or `development` | `production` |
+
+---
+
+## API Reference
+
+### POST `/provision`
+Provisions or updates Border0 sockets for a container or pod.
+
+**Request Body:**
+```json
+{
+  "container_id": "string",       // Required. Unique ID or name of the workspace container/pod.
+  "user_email": "string",         // Optional. Owner email for personal policy attachment.
+  "namespace": "string",          // Optional. K8s namespace (only for DEPLOYMENT_MODE=k8s).
+  "ssh": boolean,                 // Optional. Enable/Disable SSH socket (defaults to true).
+  "ssh_port": number,             // Optional. Custom SSH port (defaults to 22).
+  "vnc": boolean,                 // Optional. Enable/Disable VNC socket (defaults to false).
+  "vnc_port": number,             // Optional. Custom VNC port (defaults to 5901).
+  "web": boolean,                 // Optional. Enable/Disable Web App socket (defaults to false).
+  "web_port": number,             // Optional. Custom Web port (defaults to 80).
+  "tcp": boolean,                 // Optional. Enable/Disable TCP socket (defaults to false).
+  "tcp_port": number,             // Optional. Custom TCP port (Required if TCP enabled).
+  "rdp": boolean,                 // Optional. Enable/Disable RDP socket (defaults to false).
+  "rdp_port": number              // Optional. Custom RDP port (defaults to 3389).
+}
+```
+
+**Response (Success 200 OK):**
+```json
+{
+  "urls": {
+    "ssh": "ssh-xxx.border0.io",
+    "vnc": "vnc-xxx.border0.io",
+    "web": "web-xxx.border0.io",
+    "tcp": "tcp-xxx.border0.io",
+    "rdp": "rdp-xxx.border0.io"
+  },
+  "socket_ids": ["s1", "s2"]
+}
+```
+
+### POST `/deprovision`
+Removes all Border0 sockets and clean up orphaned personal policies associated with a workspace.
+
+**Request Body:**
+```json
+{
+  "container_id": "string"        // Required. Unique ID or name of the workspace.
+}
+```
+
+**Response (Success 200 OK):**
+```json
+{
+  "status": "success",
+  "deleted_count": 2
+}
+```
+
+### GET `/health` & `/healthz`
+Health check endpoint.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "mode": "docker"
+}
+```
 
 ---
 
@@ -95,6 +165,8 @@ data "http" "border0_provision" {
   request_body = jsonencode({
     container_id = "${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
     user_email   = data.coder_workspace.me.owner_email
+    ssh          = true
+    vnc          = true
   })
 }
 
@@ -219,10 +291,16 @@ The app scans for the following metadata on containers (Docker) or pods (Kuberne
 | :--- | :--- | :--- |
 | `border0.io/enable` | Must be set to `true` to trigger provisioning | `true` |
 | `border0.io/ssh` | Enable/Disable SSH socket generation (defaults to `true`) | `false` |
-| `border0.io/vnc` | Enable/Disable VNC socket generation (defaults to `true`) | `false` |
-| `border0.io/email` | Overrides the default owner email discovery | `dev@example.com` |
 | `border0.io/ssh_port` | Overrides the default SSH port (22) | `2222` |
+| `border0.io/vnc` | Enable/Disable VNC socket generation (defaults to `false`) | `true` |
 | `border0.io/vnc_port` | Overrides the default VNC port (5901) | `5900` |
+| `border0.io/web` | Enable/Disable Web App (HTTP) socket generation (defaults to `false`) | `true` |
+| `border0.io/web_port` | Set the port for the Web App (defaults to 80) | `8080` |
+| `border0.io/tcp` | Enable/Disable generic TCP socket generation (defaults to `false`) | `true` |
+| `border0.io/tcp_port` | Set the port for the TCP service (required if enabled) | `5432` |
+| `border0.io/rdp` | Enable/Disable RDP socket generation (defaults to `false`) | `true` |
+| `border0.io/rdp_port` | Set the port for the RDP service (defaults to 3389) | `3389` |
+| `border0.io/email` | Overrides the default owner email discovery | `dev@example.com` |
 
 ### 3. Usage Examples
 

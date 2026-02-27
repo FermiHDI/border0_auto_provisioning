@@ -3,13 +3,24 @@ export interface ProvisionRequest {
     user_email?: string;
     namespace?: string; // For K8s
     ssh?: boolean;
+    ssh_port?: number;
     vnc?: boolean;
+    vnc_port?: number;
+    web?: boolean;
+    web_port?: number;
+    tcp?: boolean;
+    tcp_port?: number;
+    rdp?: boolean;
+    rdp_port?: number;
 }
 
 export interface ProvisionResponse {
     urls: {
         ssh?: string;
         vnc?: string;
+        web?: string;
+        tcp?: string;
+        rdp?: string;
     };
     socket_ids: string[];
 }

@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import { Border0Client } from './border0.js';
 import { DockerDiscovery, K8sDiscovery, type ContainerDiscovery } from './discovery.js';
-import { type ProvisionRequest, type DeprovisionRequest } from './models.js';
+import { type ProvisionRequest, type ProvisionResponse, type DeprovisionRequest } from './models.js';
 import { getSecret } from './config.js';
 import { logger, startObservabilityServer, provisionCounter, requestDuration } from './observability.js';
 import { initTracing } from './tracing.js';
@@ -47,7 +47,7 @@ const discovery = getDiscoveryEngine();
 /**
  * Standalone logic to provision sockets for a container/pod.
  */
-async function performProvision(container_id: string, user_email?: string, namespace?: string, options?: { ssh?: boolean, vnc?: boolean }) {
+async function performProvision(container_id: string, user_email?: string, namespace?: string, options?: ProvisionRequest) {
     const info = await discovery.getContainerInfo(container_id, namespace);
     if (!info || !info.ip) {
         throw new Error(`Container/Pod ${container_id} not found in ${DEPLOYMENT_MODE}`);
@@ -56,50 +56,69 @@ async function performProvision(container_id: string, user_email?: string, names
     // Resolve User Email (Explicit >> Labels/Annotations)
     const email = user_email || info.email || info.labels['border0.io/email'];
 
-    // Determine which sockets to enable (Options >> Labels >> Default: true)
-    const enableSsh = options?.ssh !== undefined ? options.ssh :
-        (info.labels['border0.io/ssh'] !== undefined ? info.labels['border0.io/ssh'] === 'true' : true);
-    const enableVnc = options?.vnc !== undefined ? options.vnc :
-        (info.labels['border0.io/vnc'] !== undefined ? info.labels['border0.io/vnc'] === 'true' : true);
-
     const shortId = container_id.substring(0, 8);
-    const sshName = `ssh-${shortId}`;
-    const vncName = `vnc-${shortId}`;
+    const policies = GLOBAL_POLICY_ID ? [GLOBAL_POLICY_ID] : [];
+
+    // Helper to determine if a socket type should be enabled and which port to use
+    const getSocketConfig = (type: string, defaultPort: number) => {
+        const optionEnabled = (options as any)?.[type];
+        const labelEnabled = info.labels[`border0.io/${type}`];
+        const enable = optionEnabled !== undefined ? optionEnabled :
+            (labelEnabled !== undefined ? labelEnabled === 'true' : (type === 'ssh'));
+
+        const optionPort = (options as any)?.[`${type}_port`];
+        const labelPort = info.labels[`border0.io/${type}_port`];
+        const port = optionPort || parseInt(labelPort || defaultPort.toString());
+
+        return { enable, port };
+    };
+
+    const configs = {
+        ssh: getSocketConfig('ssh', 22),
+        vnc: getSocketConfig('vnc', 5901),
+        web: getSocketConfig('web', 80),
+        tcp: getSocketConfig('tcp', 0), // Default 0 means must be specified if enabled
+        rdp: getSocketConfig('rdp', 3389)
+    };
 
     logger.info(`Provisioning sockets for ${container_id}`, {
         category: 'provisioning',
         action: 'create_sockets',
-        data: { ip: info.ip, mode: DEPLOYMENT_MODE, email, enableSsh, enableVnc }
+        data: { ip: info.ip, mode: DEPLOYMENT_MODE, email, configs }
     });
-    const policies = GLOBAL_POLICY_ID ? [GLOBAL_POLICY_ID] : [];
-
-    const sshPort = parseInt(info.labels['border0.io/ssh_port'] || '22');
-    const vncPort = parseInt(info.labels['border0.io/vnc_port'] || '5901');
 
     const setupSocket = async (name: string, type: string, port: number) => {
+        const border0Type = type === 'web' ? 'http' : type;
         let socket = await border0.findSocketByName(name);
         if (socket) {
             logger.info(`Socket ${name} already exists. Updating configuration...`, { data: { socket_id: socket.id } });
-            const updatePayload: any = { upstream_host: info.ip };
-            if (type === 'ssh') {
+            const updatePayload: any = { upstream_host: info.ip, upstream_port: port };
+            if (border0Type === 'ssh') {
                 updatePayload.ssh_authentication_type = 'border0_certificate';
                 updatePayload.ssh_username = BORDER0_SSH_USERNAME;
             }
             socket = await border0.updateSocket(socket.id, updatePayload);
         } else {
-            logger.info(`Creating new ${type} socket: ${name}`);
-            socket = await border0.createSocket(name, type, BORDER0_CONNECTOR_ID, info.ip, port);
+            logger.info(`Creating new ${border0Type} socket: ${name} on port ${port}`);
+            socket = await border0.createSocket(name, border0Type, BORDER0_CONNECTOR_ID, info.ip, port);
         }
         await border0.attachPolicies(socket.id, email, policies);
         return socket;
     };
 
-    const result: { ssh?: any, vnc?: any } = {};
-    if (enableSsh) {
-        result.ssh = await setupSocket(sshName, 'ssh', sshPort);
-    }
-    if (enableVnc) {
-        result.vnc = await setupSocket(vncName, 'vnc', vncPort);
+    const result: ProvisionResponse = { urls: {}, socket_ids: [] };
+
+    for (const [type, cfg] of Object.entries(configs)) {
+        if (cfg.enable) {
+            if (cfg.port === 0 && type !== 'ssh') { // Quick validation if someone enables TCP without a port
+                logger.warn(`Socket type ${type} enabled but port is 0. Skipping.`);
+                continue;
+            }
+            const name = `${type}-${shortId}`;
+            const socket = await setupSocket(name, type, cfg.port);
+            (result.urls as any)[type] = socket.dnsname;
+            result.socket_ids.push(socket.id);
+        }
     }
 
     return result;
@@ -134,22 +153,10 @@ async function performDeprovision(container_id: string) {
  */
 app.post('/provision', async (req: Request<{}, {}, ProvisionRequest>, res: Response) => {
     try {
-        const { container_id, user_email, namespace, ssh, vnc } = req.body;
-        const result = await performProvision(container_id, user_email, namespace, { ssh, vnc });
+        const { container_id, user_email, namespace } = req.body;
+        const result = await performProvision(container_id, user_email, namespace, req.body);
         provisionCounter.inc({ outcome: 'success' });
-
-        const urls: { ssh?: string, vnc?: string } = {};
-        const socket_ids: string[] = [];
-        if (result.ssh) {
-            urls.ssh = result.ssh.dnsname;
-            socket_ids.push(result.ssh.id);
-        }
-        if (result.vnc) {
-            urls.vnc = result.vnc.dnsname;
-            socket_ids.push(result.vnc.id);
-        }
-
-        res.json({ urls, socket_ids });
+        res.json(result);
     } catch (error: any) {
         provisionCounter.inc({ outcome: 'failure' });
         const errMsg = error.response?.data || error.message;
@@ -174,10 +181,10 @@ app.post('/deprovision', async (req: Request<{}, {}, DeprovisionRequest>, res: R
 });
 
 /**
- * GET /
+ * GET /health and /healthz
  * Health check endpoint for monitoring and K8s probes.
  */
-app.get('/', (req: Request, res: Response) => {
+app.get(['/health', '/healthz'], (req: Request, res: Response) => {
     res.json({ status: 'healthy', mode: DEPLOYMENT_MODE });
 });
 

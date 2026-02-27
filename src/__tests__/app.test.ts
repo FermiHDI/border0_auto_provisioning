@@ -85,8 +85,8 @@ describe('App API and Auto-Provisioning', () => {
 
         expect(res.status).toBe(200);
         expect(res.body.urls.ssh).toBeDefined();
-        expect(res.body.urls.vnc).toBeDefined();
-        expect(mockBorder0Instance.createSocket).toHaveBeenCalledTimes(2);
+        expect(res.body.urls.vnc).toBeUndefined();
+        expect(mockBorder0Instance.createSocket).toHaveBeenCalledTimes(1);
     });
 
     it('provisions only SSH when requested via API', async () => {
@@ -139,6 +139,41 @@ describe('App API and Auto-Provisioning', () => {
 
         expect(res.status).toBe(200);
         expect(res.body.deleted_count).toBe(1);
+    });
+
+    it('provisions Web, TCP, and RDP with custom ports', async () => {
+        mockDiscoveryInstance.getContainerInfo.mockImplementation(() => Promise.resolve({
+            ip: '1.2.3.4',
+            labels: {
+                'border0.io/web': 'true',
+                'border0.io/web_port': '8080',
+                'border0.io/tcp': 'true',
+                'border0.io/tcp_port': '5432',
+                'border0.io/rdp': 'true'
+            },
+            email: 'user@test.com'
+        }));
+        mockBorder0Instance.findSocketByName.mockImplementation(() => Promise.resolve(null));
+        mockBorder0Instance.createSocket.mockImplementation((name) => Promise.resolve({ id: `s-${name}`, dnsname: `${name}.io` }));
+
+        const res = await request(app)
+            .post('/provision')
+            .send({
+                container_id: 'c12345678',
+                ssh: false,
+                vnc: false
+            });
+
+        expect(res.status).toBe(200);
+        expect(res.body.urls.web).toBeDefined();
+        expect(res.body.urls.tcp).toBeDefined();
+        expect(res.body.urls.rdp).toBeDefined();
+        expect(res.body.urls.ssh).toBeUndefined();
+
+        // Check ports
+        expect(mockBorder0Instance.createSocket).toHaveBeenCalledWith(expect.stringContaining('web'), 'http', expect.anything(), expect.anything(), 8080);
+        expect(mockBorder0Instance.createSocket).toHaveBeenCalledWith(expect.stringContaining('tcp'), 'tcp', expect.anything(), expect.anything(), 5432);
+        expect(mockBorder0Instance.createSocket).toHaveBeenCalledWith(expect.stringContaining('rdp'), 'rdp', expect.anything(), expect.anything(), 3389);
     });
 
     it('triggers auto-provisioning on discovery event', async () => {
