@@ -218,6 +218,8 @@ The app scans for the following metadata on containers (Docker) or pods (Kuberne
 | Label/Annotation | Description | Example |
 | :--- | :--- | :--- |
 | `border0.io/enable` | Must be set to `true` to trigger provisioning | `true` |
+| `border0.io/ssh` | Enable/Disable SSH socket generation (defaults to `true`) | `false` |
+| `border0.io/vnc` | Enable/Disable VNC socket generation (defaults to `true`) | `false` |
 | `border0.io/email` | Overrides the default owner email discovery | `dev@example.com` |
 | `border0.io/ssh_port` | Overrides the default SSH port (22) | `2222` |
 | `border0.io/vnc_port` | Overrides the default VNC port (5901) | `5900` |

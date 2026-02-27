@@ -76,7 +76,7 @@ describe('App API and Auto-Provisioning', () => {
             email: 'user@test.com'
         }));
         mockBorder0Instance.findSocketByName.mockImplementation(() => Promise.resolve(null));
-        mockBorder0Instance.createSocket.mockImplementation(() => Promise.resolve({ id: 's1', dnsname: 'ssh.io' }));
+        mockBorder0Instance.createSocket.mockImplementation((name) => Promise.resolve({ id: `s-${name}`, dnsname: `${name}.io` }));
         mockBorder0Instance.attachPolicies.mockImplementation(() => Promise.resolve());
 
         const res = await request(app)
@@ -84,7 +84,47 @@ describe('App API and Auto-Provisioning', () => {
             .send({ container_id: 'c12345678' });
 
         expect(res.status).toBe(200);
-        expect(res.body.urls.ssh).toBe('ssh.io');
+        expect(res.body.urls.ssh).toBeDefined();
+        expect(res.body.urls.vnc).toBeDefined();
+        expect(mockBorder0Instance.createSocket).toHaveBeenCalledTimes(2);
+    });
+
+    it('provisions only SSH when requested via API', async () => {
+        mockDiscoveryInstance.getContainerInfo.mockImplementation(() => Promise.resolve({
+            ip: '1.2.3.4',
+            labels: {},
+            email: 'user@test.com'
+        }));
+        mockBorder0Instance.findSocketByName.mockImplementation(() => Promise.resolve(null));
+        mockBorder0Instance.createSocket.mockImplementation((name) => Promise.resolve({ id: `s-${name}`, dnsname: `${name}.io` }));
+
+        const res = await request(app)
+            .post('/provision')
+            .send({ container_id: 'c12345678', ssh: true, vnc: false });
+
+        expect(res.status).toBe(200);
+        expect(res.body.urls.ssh).toBeDefined();
+        expect(res.body.urls.vnc).toBeUndefined();
+        expect(mockBorder0Instance.createSocket).toHaveBeenCalledTimes(1);
+    });
+
+    it('provisions only VNC when specified in labels', async () => {
+        mockDiscoveryInstance.getContainerInfo.mockImplementation(() => Promise.resolve({
+            ip: '1.2.3.4',
+            labels: { 'border0.io/ssh': 'false', 'border0.io/vnc': 'true' },
+            email: 'user@test.com'
+        }));
+        mockBorder0Instance.findSocketByName.mockImplementation(() => Promise.resolve(null));
+        mockBorder0Instance.createSocket.mockImplementation((name) => Promise.resolve({ id: `s-${name}`, dnsname: `${name}.io` }));
+
+        const res = await request(app)
+            .post('/provision')
+            .send({ container_id: 'c12345678' });
+
+        expect(res.status).toBe(200);
+        expect(res.body.urls.ssh).toBeUndefined();
+        expect(res.body.urls.vnc).toBeDefined();
+        expect(mockBorder0Instance.createSocket).toHaveBeenCalledTimes(1);
     });
 
     it('deprovisions sockets via /deprovision endpoint', async () => {

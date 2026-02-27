@@ -2,12 +2,14 @@ export interface ProvisionRequest {
     container_id: string;
     user_email?: string;
     namespace?: string; // For K8s
+    ssh?: boolean;
+    vnc?: boolean;
 }
 
 export interface ProvisionResponse {
     urls: {
-        ssh: string;
-        vnc: string;
+        ssh?: string;
+        vnc?: string;
     };
     socket_ids: string[];
 }

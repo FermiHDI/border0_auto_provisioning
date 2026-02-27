@@ -47,7 +47,7 @@ const discovery = getDiscoveryEngine();
 /**
  * Standalone logic to provision sockets for a container/pod.
  */
-async function performProvision(container_id: string, user_email?: string, namespace?: string) {
+async function performProvision(container_id: string, user_email?: string, namespace?: string, options?: { ssh?: boolean, vnc?: boolean }) {
     const info = await discovery.getContainerInfo(container_id, namespace);
     if (!info || !info.ip) {
         throw new Error(`Container/Pod ${container_id} not found in ${DEPLOYMENT_MODE}`);
@@ -56,6 +56,12 @@ async function performProvision(container_id: string, user_email?: string, names
     // Resolve User Email (Explicit >> Labels/Annotations)
     const email = user_email || info.email || info.labels['border0.io/email'];
 
+    // Determine which sockets to enable (Options >> Labels >> Default: true)
+    const enableSsh = options?.ssh !== undefined ? options.ssh :
+        (info.labels['border0.io/ssh'] !== undefined ? info.labels['border0.io/ssh'] === 'true' : true);
+    const enableVnc = options?.vnc !== undefined ? options.vnc :
+        (info.labels['border0.io/vnc'] !== undefined ? info.labels['border0.io/vnc'] === 'true' : true);
+
     const shortId = container_id.substring(0, 8);
     const sshName = `ssh-${shortId}`;
     const vncName = `vnc-${shortId}`;
@@ -63,7 +69,7 @@ async function performProvision(container_id: string, user_email?: string, names
     logger.info(`Provisioning sockets for ${container_id}`, {
         category: 'provisioning',
         action: 'create_sockets',
-        data: { ip: info.ip, mode: DEPLOYMENT_MODE, email }
+        data: { ip: info.ip, mode: DEPLOYMENT_MODE, email, enableSsh, enableVnc }
     });
     const policies = GLOBAL_POLICY_ID ? [GLOBAL_POLICY_ID] : [];
 
@@ -88,10 +94,15 @@ async function performProvision(container_id: string, user_email?: string, names
         return socket;
     };
 
-    const sshSocket = await setupSocket(sshName, 'ssh', sshPort);
-    const vncSocket = await setupSocket(vncName, 'vnc', vncPort);
+    const result: { ssh?: any, vnc?: any } = {};
+    if (enableSsh) {
+        result.ssh = await setupSocket(sshName, 'ssh', sshPort);
+    }
+    if (enableVnc) {
+        result.vnc = await setupSocket(vncName, 'vnc', vncPort);
+    }
 
-    return { ssh: sshSocket, vnc: vncSocket };
+    return result;
 }
 
 /**
@@ -123,13 +134,22 @@ async function performDeprovision(container_id: string) {
  */
 app.post('/provision', async (req: Request<{}, {}, ProvisionRequest>, res: Response) => {
     try {
-        const { container_id, user_email, namespace } = req.body;
-        const result = await performProvision(container_id, user_email, namespace);
+        const { container_id, user_email, namespace, ssh, vnc } = req.body;
+        const result = await performProvision(container_id, user_email, namespace, { ssh, vnc });
         provisionCounter.inc({ outcome: 'success' });
-        res.json({
-            urls: { ssh: result.ssh.dnsname, vnc: result.vnc.dnsname },
-            socket_ids: [result.ssh.id, result.vnc.id]
-        });
+
+        const urls: { ssh?: string, vnc?: string } = {};
+        const socket_ids: string[] = [];
+        if (result.ssh) {
+            urls.ssh = result.ssh.dnsname;
+            socket_ids.push(result.ssh.id);
+        }
+        if (result.vnc) {
+            urls.vnc = result.vnc.dnsname;
+            socket_ids.push(result.vnc.id);
+        }
+
+        res.json({ urls, socket_ids });
     } catch (error: any) {
         provisionCounter.inc({ outcome: 'failure' });
         const errMsg = error.response?.data || error.message;
