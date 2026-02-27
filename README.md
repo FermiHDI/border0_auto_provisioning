@@ -365,5 +365,8 @@ npm test
 ```
 *Note: Tests include integration checks using `testcontainers` which require Docker.*
 
+### Contributing
+Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+
 ---
 **FermiHDI Limited** - Secure Workspace Connectivity
