@@ -29,10 +29,23 @@ export class Border0Client {
      */
     private extractList(data: any, keys: string[]): any[] {
         if (!data) return [];
+        let list: any[] = [];
         for (const key of keys) {
-            if (data[key]) return data[key];
+            if (data[key]) {
+                list = data[key];
+                break;
+            }
         }
-        return Array.isArray(data) ? data : [];
+        if (list.length === 0 && Array.isArray(data)) {
+            list = data;
+        }
+
+        return list.map(item => {
+            if (item && typeof item === 'object' && !item.id) {
+                item.id = item.socket_id || item.policy_id;
+            }
+            return item;
+        });
     }
 
     /**
@@ -50,7 +63,7 @@ export class Border0Client {
             name,
             socket_type,
             connector_id,
-            upstream_type: 'proxy',
+            upstream_type: (socket_type === 'http') ? 'http' : 'proxy',
             upstream_host,
             upstream_port
         };
@@ -61,8 +74,12 @@ export class Border0Client {
             payload.ssh_username = this.sshUsername;
         }
 
-        const resp = await this.client.post('/sockets', payload);
-        return resp.data;
+        const resp = await this.client.post('/socket', payload);
+        const data = resp.data;
+        if (data && !data.id && data.socket_id) {
+            data.id = data.socket_id;
+        }
+        return data;
     }
 
     /**
@@ -71,7 +88,8 @@ export class Border0Client {
      * @param {string} socket_id - The unique ID of the socket.
      */
     async deleteSocket(socket_id: string) {
-        await this.client.delete(`/sockets/${socket_id}`);
+        if (!socket_id) throw new Error('socket_id is required for deleteSocket');
+        await this.client.delete(`/socket/${socket_id}`);
     }
 
     /**
@@ -106,8 +124,13 @@ export class Border0Client {
      * @returns {Promise<any>} The updated socket details.
      */
     async updateSocket(socket_id: string, payload: any) {
-        const resp = await this.client.put(`/sockets/${socket_id}`, payload);
-        return resp.data;
+        if (!socket_id) throw new Error('socket_id is required for updateSocket');
+        const resp = await this.client.put(`/socket/${socket_id}`, payload);
+        const data = resp.data;
+        if (data && !data.id && data.socket_id) {
+            data.id = data.socket_id;
+        }
+        return data;
     }
 
     /**
@@ -130,7 +153,8 @@ export class Border0Client {
      * @param {string} policy_id - The ID of the policy to delete.
      */
     async deletePolicy(policy_id: string) {
-        await this.client.delete(`/policies/${policy_id}`);
+        if (!policy_id) throw new Error('policy_id is required for deletePolicy');
+        await this.client.delete(`/policy/${policy_id}`);
     }
 
     /**
@@ -213,7 +237,9 @@ export class Border0Client {
 
         // 3. Attach all to Socket
         if (policyIds.length > 0) {
-            await this.client.put(`/sockets/${socket_id}/policies`, { policy_ids: policyIds });
+            // Updated to use singular /policy and the actions array format required by newer Border0 API
+            const actions = policyIds.map(id => ({ action: 'add', policy_id: id }));
+            await this.client.put(`/socket/${socket_id}/policy`, { actions });
         }
     }
 }

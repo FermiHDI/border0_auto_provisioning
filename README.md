@@ -358,12 +358,28 @@ The FermiHDI Glue App includes advanced features to keep your Border0 organizati
 
 ## Development & Testing
 ### Quality Standard
-We maintain **100% Code Coverage**.
+We maintain high code coverage through automated unit and integration tests.
+
+**Run All Tests (Standard):**
 ```bash
 npm install
 npm test
 ```
-*Note: Tests include integration checks using `testcontainers` which require Docker.*
+*Note: Standard tests include mocks and `testcontainers` (which require Docker).*
+
+### Live API Integration Tests
+For deeper verification, the project includes a `live_api.test.ts` suite that interacts directly with the Border0 API to verify response formats, pathing logic, and resource lifecycle.
+
+**To trigger live tests:**
+1. Ensure your `.env` or system environment contains:
+   - `BORDER0_ADMIN_TOKEN`: Your Border0 API token.
+   - `BORDER0_CONNECTOR_ID`: A valid Connector ID where sockets can be provisioned.
+   - `BORDER0_GLOBAL_POLICY_ID` (Optional): A policy ID to verify attachment logic.
+2. Run the live test suite:
+   ```bash
+   npm run test:live
+   ```
+*If credentials are missing, this test suite will automatically be skipped.*
 
 ### Contributing
 Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.

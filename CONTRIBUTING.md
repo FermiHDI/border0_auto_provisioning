@@ -50,7 +50,15 @@ We maintain **100% Code Coverage** for all logic.
   npm test
   ```
 
-### 2. Coding Style
+### 2. Live API Integration Tests
+For deep verification, the project includes a `live_api.test.ts` suite that interacts directly with the live Border0 API. This is the preferred way to verify changes to the API client.
+- Ensure your `.env` contains `BORDER0_ADMIN_TOKEN` and `BORDER0_CONNECTOR_ID`.
+- Run only the live test suite:
+  ```bash
+  npm test src/__tests__/live_api.test.ts
+  ```
+
+### 3. Coding Style
 - **TypeScript**: Use strong typing for all functions and variables.
 - **ESM**: This project uses ES Modules (`"type": "module"` in `package.json`). Ensure all imports include the `.js` extension (e.g., `import { foo } from './foo.js'`).
 - **Logging**: Use the centralized `logger` from `src/observability.ts` for all application logs. Follow the JSON schema standard.

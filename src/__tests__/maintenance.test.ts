@@ -12,7 +12,7 @@ describe('Border0Client Advanced Maintenance', () => {
     });
 
     it('deletes a policy correctly', async () => {
-        const scope = nock(baseUrl).delete('/policies/p1').reply(200, {});
+        const scope = nock(baseUrl).delete('/policy/p1').reply(200, {});
         await client.deletePolicy('p1');
         expect(scope.isDone()).toBe(true);
     });
@@ -61,7 +61,7 @@ describe('Border0Client Advanced Maintenance', () => {
         // 2nd getSocketCountByPolicy call (for p-active) -> returns 1
         axiosGetSpy.mockResolvedValueOnce({ data: { sockets: [{ policies: [{ id: 'p-active' }] }] } });
 
-        const deleteScope = nock(baseUrl).delete('/policies/p-orphan').reply(200, {});
+        const deleteScope = nock(baseUrl).delete('/policy/p-orphan').reply(200, {});
 
         await client.performPolicyMaintenance();
 
@@ -73,7 +73,7 @@ describe('Border0Client Advanced Maintenance', () => {
         nock(baseUrl).get('/policies').reply(200, { policies: [{ id: 'p1', name: 'user-policy-x' }] });
         // getSocketCountByPolicy call
         nock(baseUrl).get('/sockets').reply(200, { list: [] });
-        nock(baseUrl).delete('/policies/p1').reply(200, {});
+        nock(baseUrl).delete('/policy/p1').reply(200, {});
 
         await client.performPolicyMaintenance();
     });

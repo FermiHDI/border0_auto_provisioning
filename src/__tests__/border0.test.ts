@@ -13,7 +13,7 @@ describe('Border0Client', () => {
 
     it('creates a vnc socket correctly', async () => {
         const scope = nock(baseUrl)
-            .post('/sockets', {
+            .post('/socket', {
                 name: 'test-vnc',
                 socket_type: 'vnc',
                 connector_id: 'conn-1',
@@ -28,9 +28,18 @@ describe('Border0Client', () => {
         expect(scope.isDone()).toBe(true);
     });
 
+    it('creates a socket and normalizes socket_id to id', async () => {
+        nock(baseUrl)
+            .post('/socket')
+            .reply(200, { socket_id: 'sock-123', dnsname: 'test.border0.io' });
+
+        const result = await client.createSocket('test', 'http', 'conn-1', '1.2.3.4', 80);
+        expect(result.id).toBe('sock-123');
+    });
+
     it('creates an ssh socket with certificate auth correctly', async () => {
         const scope = nock(baseUrl)
-            .post('/sockets', {
+            .post('/socket', {
                 name: 'test-ssh',
                 socket_type: 'ssh',
                 connector_id: 'conn-1',
@@ -51,7 +60,9 @@ describe('Border0Client', () => {
         const email = 'user@test.com';
         const policyName = 'user-policy-user-test-com';
         nock(baseUrl).get('/policies').reply(200, [{ id: 'existing-p-1', name: policyName }]);
-        nock(baseUrl).put('/sockets/sock-1/policies', { policy_ids: ['existing-p-1'] }).reply(200, {});
+        nock(baseUrl).put('/socket/sock-1/policy', {
+            actions: [{ action: 'add', policy_id: 'existing-p-1' }]
+        }).reply(200, {});
 
         await client.attachPolicies('sock-1', email);
     });
@@ -60,7 +71,9 @@ describe('Border0Client', () => {
         const email = 'new-user@test.com';
         nock(baseUrl).get('/policies').reply(200, { policies: [] });
         nock(baseUrl).post('/policies').reply(201, { id: 'new-p-1' });
-        nock(baseUrl).put('/sockets/sock-1/policies', { policy_ids: ['new-p-1'] }).reply(200, {});
+        nock(baseUrl).put('/socket/sock-1/policy', {
+            actions: [{ action: 'add', policy_id: 'new-p-1' }]
+        }).reply(200, {});
 
         await client.attachPolicies('sock-1', email);
     });
@@ -69,7 +82,9 @@ describe('Border0Client', () => {
         const email = 'other-user@test.com';
         nock(baseUrl).get('/policies').reply(200, []); // direct array
         nock(baseUrl).post('/policies').reply(201, { policy_id: 'new-p-2' });
-        nock(baseUrl).put('/sockets/sock-1/policies', { policy_ids: ['new-p-2'] }).reply(200, {});
+        nock(baseUrl).put('/socket/sock-1/policy', {
+            actions: [{ action: 'add', policy_id: 'new-p-2' }]
+        }).reply(200, {});
 
         await client.attachPolicies('sock-1', email);
     });
@@ -79,7 +94,9 @@ describe('Border0Client', () => {
         nock(baseUrl).get('/policies').reply(200, []);
         nock(baseUrl).post('/policies').reply(403, { error: 'Not allowed' });
         // Only mgmt-1 should be attached if personal creation fails
-        nock(baseUrl).put('/sockets/sock-1/policies', { policy_ids: ['mgmt-1'] }).reply(200, {});
+        nock(baseUrl).put('/socket/sock-1/policy', {
+            actions: [{ action: 'add', policy_id: 'mgmt-1' }]
+        }).reply(200, {});
 
         const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
         await client.attachPolicies('sock-1', email, ['mgmt-1']);
@@ -91,7 +108,8 @@ describe('Border0Client', () => {
         const email = 'msg@test.com';
         nock(baseUrl).get('/policies').reply(200, []);
         nock(baseUrl).post('/policies').replyWithError('Network failed');
-        nock(baseUrl).put('/sockets/sock-1/policies', { policy_ids: [] }).reply(200, {});
+        // If everything fails, it might still try to attach predefined if any
+        // In this case, we passed none, so no call to PUT /socket/sock-1/policy
 
         const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
         await client.attachPolicies('sock-1', email);
@@ -141,7 +159,7 @@ describe('Border0Client', () => {
     });
 
     it('deletes a socket', async () => {
-        nock(baseUrl).delete('/sockets/sock-1').reply(200, {});
+        nock(baseUrl).delete('/socket/sock-1').reply(200, {});
         await client.deleteSocket('sock-1');
     });
 
@@ -160,8 +178,14 @@ describe('Border0Client', () => {
         expect(await client.findSocketByName('any')).toBeNull();
     });
 
+    it('finds a socket by exact name (normalizing socket_id)', async () => {
+        nock(baseUrl).get('/sockets').reply(200, { sockets: [{ name: 'exact-match', socket_id: 'sock-1' }] });
+        const socket = await client.findSocketByName('exact-match');
+        expect(socket?.id).toBe('sock-1');
+    });
+
     it('updates a socket correctly', async () => {
-        nock(baseUrl).put('/sockets/sock-1', { upstream_host: '5.6.7.8' }).reply(200, { id: 'sock-1' });
+        nock(baseUrl).put('/socket/sock-1', { upstream_host: '5.6.7.8' }).reply(200, { id: 'sock-1' });
         const res = await client.updateSocket('sock-1', { upstream_host: '5.6.7.8' });
         expect(res.id).toBe('sock-1');
     });
