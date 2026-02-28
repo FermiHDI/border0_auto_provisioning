@@ -12,6 +12,7 @@ export interface ProvisionRequest {
     tcp_port?: number;
     rdp?: boolean;
     rdp_port?: number;
+    tags?: Record<string, string>;
 }
 
 export interface ProvisionResponse {

@@ -18,6 +18,7 @@ describe('DockerDiscovery Integration', () => {
             .withLabels({
                 'border0.io/enable': 'true',
                 'border0.io/email': 'integration-test@fermihdi.com',
+                'border0.io/tag.env': 'integration',
                 'project': 'border0-glue'
             })
             .start();
@@ -42,6 +43,7 @@ describe('DockerDiscovery Integration', () => {
         expect(info?.ip).toMatch(/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/); // Validates IP format
         expect(info?.email).toBe('integration-test@fermihdi.com');
         expect(info?.labels['project']).toBe('border0-glue');
+        expect(info?.tags['env']).toBe('integration');
     });
 
     /**

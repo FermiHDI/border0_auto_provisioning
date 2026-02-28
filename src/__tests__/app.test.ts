@@ -73,7 +73,8 @@ describe('App API and Auto-Provisioning', () => {
         mockDiscoveryInstance.getContainerInfo.mockImplementation(() => Promise.resolve({
             ip: '1.2.3.4',
             labels: { 'border0.io/ssh_port': '2222' },
-            email: 'user@test.com'
+            email: 'user@test.com',
+            tags: {}
         }));
         mockBorder0Instance.findSocketByName.mockImplementation(() => Promise.resolve(null));
         mockBorder0Instance.createSocket.mockImplementation((name) => Promise.resolve({ id: `s-${name}`, dnsname: `${name}.io` }));
@@ -93,7 +94,8 @@ describe('App API and Auto-Provisioning', () => {
         mockDiscoveryInstance.getContainerInfo.mockImplementation(() => Promise.resolve({
             ip: '1.2.3.4',
             labels: {},
-            email: 'user@test.com'
+            email: 'user@test.com',
+            tags: {}
         }));
         mockBorder0Instance.findSocketByName.mockImplementation(() => Promise.resolve(null));
         mockBorder0Instance.createSocket.mockImplementation((name) => Promise.resolve({ id: `s-${name}`, dnsname: `${name}.io` }));
@@ -112,7 +114,8 @@ describe('App API and Auto-Provisioning', () => {
         mockDiscoveryInstance.getContainerInfo.mockImplementation(() => Promise.resolve({
             ip: '1.2.3.4',
             labels: { 'border0.io/ssh': 'false', 'border0.io/vnc': 'true' },
-            email: 'user@test.com'
+            email: 'user@test.com',
+            tags: {}
         }));
         mockBorder0Instance.findSocketByName.mockImplementation(() => Promise.resolve(null));
         mockBorder0Instance.createSocket.mockImplementation((name) => Promise.resolve({ id: `s-${name}`, dnsname: `${name}.io` }));
@@ -151,7 +154,8 @@ describe('App API and Auto-Provisioning', () => {
                 'border0.io/tcp_port': '5432',
                 'border0.io/rdp': 'true'
             },
-            email: 'user@test.com'
+            email: 'user@test.com',
+            tags: {}
         }));
         mockBorder0Instance.findSocketByName.mockImplementation(() => Promise.resolve(null));
         mockBorder0Instance.createSocket.mockImplementation((name) => Promise.resolve({ id: `s-${name}`, dnsname: `${name}.io` }));
@@ -171,9 +175,9 @@ describe('App API and Auto-Provisioning', () => {
         expect(res.body.urls.ssh).toBeUndefined();
 
         // Check ports
-        expect(mockBorder0Instance.createSocket).toHaveBeenCalledWith(expect.stringContaining('web'), 'http', expect.anything(), expect.anything(), 8080);
-        expect(mockBorder0Instance.createSocket).toHaveBeenCalledWith(expect.stringContaining('tcp'), 'tcp', expect.anything(), expect.anything(), 5432);
-        expect(mockBorder0Instance.createSocket).toHaveBeenCalledWith(expect.stringContaining('rdp'), 'rdp', expect.anything(), expect.anything(), 3389);
+        expect(mockBorder0Instance.createSocket).toHaveBeenCalledWith(expect.stringContaining('web'), 'http', expect.anything(), expect.anything(), 8080, expect.anything());
+        expect(mockBorder0Instance.createSocket).toHaveBeenCalledWith(expect.stringContaining('tcp'), 'tcp', expect.anything(), expect.anything(), 5432, expect.anything());
+        expect(mockBorder0Instance.createSocket).toHaveBeenCalledWith(expect.stringContaining('rdp'), 'rdp', expect.anything(), expect.anything(), 3389, expect.anything());
     });
 
     it('triggers auto-provisioning on discovery event', async () => {
@@ -181,7 +185,8 @@ describe('App API and Auto-Provisioning', () => {
 
         mockDiscoveryInstance.getContainerInfo.mockImplementation(() => Promise.resolve({
             ip: '5.5.5.5',
-            labels: { 'border0.io/enable': 'true', 'border0.io/email': 'auto@test.com' }
+            labels: { 'border0.io/enable': 'true', 'border0.io/email': 'auto@test.com' },
+            tags: {}
         }));
         mockBorder0Instance.findSocketByName.mockImplementation(() => Promise.resolve(null));
         mockBorder0Instance.createSocket.mockImplementation(() => Promise.resolve({ id: 's-auto', dnsname: 'auto.io' }));

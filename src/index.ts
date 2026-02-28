@@ -56,6 +56,9 @@ async function performProvision(container_id: string, user_email?: string, names
     // Resolve User Email (Explicit >> Labels/Annotations)
     const email = user_email || info.email || info.labels['border0.io/email'];
 
+    // Combine tags (Explicit API tags >> Metadata/Label tags)
+    const mergedTags = { ...info.tags, ...(options?.tags || {}) };
+
     const shortId = container_id.substring(0, 8);
     const policies = GLOBAL_POLICY_ID ? [GLOBAL_POLICY_ID] : [];
 
@@ -84,7 +87,7 @@ async function performProvision(container_id: string, user_email?: string, names
     logger.info(`Provisioning sockets for ${container_id}`, {
         category: 'provisioning',
         action: 'create_sockets',
-        data: { ip: info.ip, mode: DEPLOYMENT_MODE, email, configs }
+        data: { ip: info.ip, mode: DEPLOYMENT_MODE, email, configs, tags: mergedTags }
     });
 
     const setupSocket = async (name: string, type: string, port: number) => {
@@ -92,15 +95,16 @@ async function performProvision(container_id: string, user_email?: string, names
         let socket = await border0.findSocketByName(name);
         if (socket) {
             logger.info(`Socket ${name} already exists. Updating configuration...`, { data: { socket_id: socket.id } });
-            const updatePayload: any = { upstream_host: info.ip, upstream_port: port };
-            if (border0Type === 'ssh') {
-                updatePayload.ssh_authentication_type = 'border0_certificate';
-                updatePayload.ssh_username = BORDER0_SSH_USERNAME;
-            }
+            const updatePayload: any = {
+                upstream_host: info.ip,
+                upstream_port: port,
+                socket_type: border0Type,
+                tags: mergedTags
+            };
             socket = await border0.updateSocket(socket.id, updatePayload);
         } else {
             logger.info(`Creating new ${border0Type} socket: ${name} on port ${port}`);
-            socket = await border0.createSocket(name, border0Type, BORDER0_CONNECTOR_ID, info.ip, port);
+            socket = await border0.createSocket(name, border0Type, BORDER0_CONNECTOR_ID, info.ip, port, mergedTags);
         }
         await border0.attachPolicies(socket.id, email, policies);
         return socket;

@@ -62,6 +62,29 @@ describe('Discovery Engines', () => {
             const info = await discovery.getContainerInfo('test-id');
             expect(info?.ip).toBe('172.17.0.2');
             expect(info?.email).toBe('docker@test.com');
+            expect(info?.tags).toEqual({});
+        });
+
+        it('extracts tags from docker labels', async () => {
+            const mockContainer = mockDockerInstance.getContainer();
+            mockContainer.inspect.mockResolvedValue({
+                NetworkSettings: {
+                    Networks: { bridge: { IPAddress: '172.17.0.2' } }
+                },
+                Config: {
+                    Labels: {
+                        'border0.io/tag.env': 'dev',
+                        'border0.io/border0_client_category': 'database',
+                        'other-label': 'ignore'
+                    }
+                }
+            });
+
+            const info = await discovery.getContainerInfo('test-id');
+            expect(info?.tags).toEqual({
+                'env': 'dev',
+                'border0_client_category': 'database'
+            });
         });
 
         it('watches docker events', async () => {
@@ -108,6 +131,24 @@ describe('Discovery Engines', () => {
             const info = await discovery.getContainerInfo('pod-id', 'ns');
             expect(info?.ip).toBe('10.0.0.1');
             expect(info?.email).toBe('k8s@test.com');
+        });
+
+        it('extracts tags from k8s annotations and labels', async () => {
+            mockK8sApi.readNamespacedPod.mockResolvedValue({
+                body: {
+                    status: { podIP: '10.0.0.1' },
+                    metadata: {
+                        labels: { 'border0.io/tag.team': 'alpha' },
+                        annotations: { 'border0.io/border0_client_icon': 'database' }
+                    }
+                }
+            });
+
+            const info = await discovery.getContainerInfo('pod-id', 'ns');
+            expect(info?.tags).toEqual({
+                'team': 'alpha',
+                'border0_client_icon': 'database'
+            });
         });
 
         it('watches k8s pod events', async () => {

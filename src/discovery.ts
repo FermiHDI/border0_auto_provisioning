@@ -5,6 +5,7 @@ export interface DiscoveryInfo {
     ip: string;
     labels: Record<string, string>;
     email?: string;
+    tags: Record<string, string>;
 }
 
 export interface DiscoveryEvent {
@@ -16,6 +17,34 @@ export interface DiscoveryEvent {
 export abstract class ContainerDiscovery {
     abstract getContainerInfo(container_id: string, namespace?: string): Promise<DiscoveryInfo | null>;
     abstract startWatching(callback: (event: DiscoveryEvent) => void): Promise<void>;
+
+    /**
+     * Parses tags from labels or annotations.
+     * Looks for border0.io/tag.<name> or specific well-known tags.
+     */
+    protected parseTags(metadata: Record<string, string>): Record<string, string> {
+        const tags: Record<string, string> = {};
+        const prefix = 'border0.io/tag.';
+        const wellKnownPrefix = 'border0.io/';
+        const wellKnownKeys = [
+            'border0_client_category',
+            'border0_client_subcategory',
+            'border0_client_icon'
+        ];
+
+        for (const [key, value] of Object.entries(metadata)) {
+            if (key.startsWith(prefix)) {
+                const tagName = key.substring(prefix.length);
+                tags[tagName] = value;
+            } else if (key.startsWith(wellKnownPrefix)) {
+                const potentialKey = key.substring(wellKnownPrefix.length);
+                if (wellKnownKeys.includes(potentialKey)) {
+                    tags[potentialKey] = value;
+                }
+            }
+        }
+        return tags;
+    }
 }
 
 /**
@@ -49,7 +78,8 @@ export class DockerDiscovery extends ContainerDiscovery {
             return {
                 ip,
                 labels,
-                email: labels['border0.io/email'] || labels['com.coder.user_email'] || labels['owner_email']
+                email: labels['border0.io/email'] || labels['com.coder.user_email'] || labels['owner_email'],
+                tags: this.parseTags(labels)
             };
         } catch (error) {
             console.error(`Error discovering Docker container ${container_id}:`, error);
@@ -101,13 +131,18 @@ export class K8sDiscovery extends ContainerDiscovery {
             const res = await (this.k8sApi as any).readNamespacedPod(container_id, namespace);
             const pod = res.body;
 
+            const labels = pod.metadata?.labels || {};
+            const annotations = pod.metadata?.annotations || {};
+            const combinedMetadata = { ...labels, ...annotations };
+
             return {
                 ip: pod.status?.podIP || '',
-                labels: pod.metadata?.labels || {},
-                email: pod.metadata?.labels?.['border0.io/email'] ||
-                    pod.metadata?.annotations?.['border0.io/email'] ||
-                    pod.metadata?.labels?.['com.coder.user_email'] ||
-                    pod.metadata?.annotations?.['com.coder.user_email']
+                labels: combinedMetadata,
+                email: labels['border0.io/email'] ||
+                    annotations['border0.io/email'] ||
+                    labels['com.coder.user_email'] ||
+                    annotations['com.coder.user_email'],
+                tags: this.parseTags(combinedMetadata)
             };
         } catch (error) {
             console.error(`Error discovering K8s pod ${container_id} in namespace ${namespace}:`, error);

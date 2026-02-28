@@ -337,13 +337,40 @@ The FermiHDI Glue App is fully instrumented for enterprise-grade observability:
 - **Metrics (Port 8080)**: Exposes a `/metrics` endpoint on port `8080` for Prometheus scraping.
 - **Health Checks (Port 8080)**: Provides a Section-4 compliant `/healthz` endpoint on port `8080`.
 - **Distributed Tracing**: Automatically generates traces for OpenTelemetry collectors (configured via `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable).
+- **Policy Maintenance**: Periodically cleans up orphaned personal policies to keep your Border0 organization tidy.
+- **Socket Tags**: Support for adding custom metadata to sockets via API or labels.
 
-## Maintenance & Garbage Collection
+## REST API Reference
 The FermiHDI Glue App includes advanced features to keep your Border0 organization clean:
 
 1.  **Socket Removal**: On `/deprovision`, all sockets associated with the workspace are deleted.
 2.  **Automated Policy Cleanup**:
     *   **Shared Personal Policies**: The app creates a dedicated policy for each developer, shared across their SSH and VNC workspaces.
+### Socket Tags (Optional)
+You can attach metadata (tags) to the created sockets to improve organization or customize the Border0 client UI. Tags can be provided via the REST API or discovered automatically from container labels/pod annotations.
+
+#### 1. Via REST API
+Include a `tags` object in your `/provision` request:
+```json
+{
+  "container_id": "my-worker-1",
+  "tags": {
+    "env": "production",
+    "border0_client_category": "Database"
+  }
+}
+```
+
+#### 2. Via Container Labels / Pod Annotations
+Prefix your metadata with `border0.io/tag.` or use the specialized UI keys directly with the `border0.io/` prefix:
+- `border0.io/tag.project=alpha` -> Socket tag: `project=alpha`
+- `border0.io/border0_client_category=Development` -> Socket tag: `border0_client_category=Development`
+- `border0.io/border0_client_subcategory=SSH` -> Socket tag: `border0_client_subcategory=SSH`
+- `border0.io/border0_client_icon=terminal` -> Socket tag: `border0_client_icon=terminal`
+
+---
+
+## Maintenance & Garbage Collection
     *   **Hourly Garbage Collection**: The app performs a maintenance scan every hour. If it finds a personal policy that is no longer attached to any active sockets, it is automatically deleted to keep the organization clean.
     *   **Adaptive Scheduling**: If the Border0 API exhibits latency, the app automatically jitters the next maintenance run to optimize load management.
 
