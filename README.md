@@ -247,8 +247,6 @@ Update your Coder workspace `Dockerfile` to accept Border0 certificate logins. T
 
 To get the border0_ca.pub for your SSH server, log in to the Border0 portal and navigate to Organization Settings > Details. Copy the SSH CA public key shown there and save it into a file that you then copy into your Docker image.
 
-Alternatively you can use the Border0 CLI to fetch the SSH CA public key and save it into a file that you then copy into your Docker image. For example: ```border0 organization show --format json | jq -r '.border0_ca.pub'```
-
 ```dockerfile
 # Replace 'coder' with your desired SSH username
 ARG BORDER0_SSH_USERNAME=coder
